@@ -44,34 +44,46 @@ jobs:
           pip install buildozer==1.5.0
           pip install cython==0.29.36
 
-      # ✅ SDK를 직접 설치하고 build-tools 33.0.2 명시
-      - name: 📱 Install Android SDK + Build-Tools 33.0.2
+      - name: 📱 Setup Android SDK (with legacy tools/bin symlink)
         run: |
-          # commandlinetools 다운로드
+          export SDK_ROOT=$HOME/.buildozer/android/platform/android-sdk
+
+          # commandlinetools 설치
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdtools.zip
-          unzip -q cmdtools.zip -d $HOME/android-sdk-setup
-          mkdir -p $HOME/.buildozer/android/platform/android-sdk/cmdline-tools/latest
-          cp -r $HOME/android-sdk-setup/cmdline-tools/* $HOME/.buildozer/android/platform/android-sdk/cmdline-tools/latest/
+          unzip -q cmdtools.zip -d /tmp/cmdtools-extract
 
-          export ANDROID_SDK_ROOT=$HOME/.buildozer/android/platform/android-sdk
-          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
+          mkdir -p $SDK_ROOT/cmdline-tools/latest
+          cp -r /tmp/cmdtools-extract/cmdline-tools/* $SDK_ROOT/cmdline-tools/latest/
 
-          # 라이선스 동의
-          mkdir -p $ANDROID_SDK_ROOT/licenses
-          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_SDK_ROOT/licenses/android-sdk-license
-          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $ANDROID_SDK_ROOT/licenses/android-sdk-license
-          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> $ANDROID_SDK_ROOT/licenses/android-sdk-license
-          yes | sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses || true
+          export SDKMANAGER=$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager
 
-          # ✅ build-tools 33.0.2 설치 (37 아님!)
-          sdkmanager --sdk_root=$ANDROID_SDK_ROOT \
+          # 라이선스 파일 직접 생성
+          mkdir -p $SDK_ROOT/licenses
+          printf "24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e\n84831b9409646a918e30573bab4c9c91346d8abd" \
+            > $SDK_ROOT/licenses/android-sdk-license
+          printf "84831b9409646a918e30573bab4c9c91346d8abd" \
+            > $SDK_ROOT/licenses/android-sdk-preview-license
+
+          # build-tools 33.0.2, platforms 설치
+          yes | $SDKMANAGER --sdk_root=$SDK_ROOT --licenses || true
+          $SDKMANAGER --sdk_root=$SDK_ROOT \
             "platforms;android-33" \
             "build-tools;33.0.2" \
             "platform-tools"
 
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-          echo "$ANDROID_SDK_ROOT/build-tools/33.0.2" >> $GITHUB_PATH
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+          # ✅ 핵심: Buildozer가 찾는 옛날 경로에 심볼릭 링크 생성
+          mkdir -p $SDK_ROOT/tools/bin
+          ln -sf $SDK_ROOT/cmdline-tools/latest/bin/sdkmanager $SDK_ROOT/tools/bin/sdkmanager
+          ln -sf $SDK_ROOT/cmdline-tools/latest/bin/avdmanager  $SDK_ROOT/tools/bin/avdmanager
+
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> $GITHUB_ENV
+          echo "$SDK_ROOT/build-tools/33.0.2" >> $GITHUB_PATH
+          echo "$SDK_ROOT/platform-tools" >> $GITHUB_PATH
+          echo "$SDK_ROOT/tools/bin" >> $GITHUB_PATH
+
+          echo "=== 설치 확인 ==="
+          ls $SDK_ROOT/build-tools/
+          ls $SDK_ROOT/tools/bin/
 
       - name: 💾 Cache Buildozer global directory
         uses: actions/cache@v4
@@ -86,8 +98,9 @@ jobs:
           yes | buildozer -v android debug 2>&1 | tee build.log
         env:
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          JAVA_HOME: ${{ env.JAVA_HOME }}
 
-      - name: 🔍 Locate and collect APK files
+      - name: 🔍 Collect APK
         run: |
           find . -name "*.apk" 2>/dev/null
           mkdir -p output
@@ -96,6 +109,7 @@ jobs:
           elif find .buildozer -name "*.apk" 2>/dev/null | grep -q .; then
             find .buildozer -name "*.apk" -exec cp {} output/ \;
           else
+            echo "❌ APK 없음 - 마지막 100줄 로그:"
             tail -100 build.log
             exit 1
           fi
