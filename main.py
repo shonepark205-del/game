@@ -1,4 +1,10 @@
-import pygame
+# 안드로이드: pygame_sdl2, PC: pygame 자동 선택
+try:
+    import pygame_sdl2
+    pygame_sdl2.import_as_pygame()
+    import pygame
+except ImportError:
+    import pygame
 import random
 import time
 import os
