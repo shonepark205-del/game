@@ -10,42 +10,95 @@ on:
 
 jobs:
   build-apk:
-    name: Build Android APK (Docker)
+    name: Build Android APK
     runs-on: ubuntu-22.04
 
     steps:
       - name: ⬇️ Checkout repository
         uses: actions/checkout@v4
 
-      # ✅ Kivy 공식 Docker 이미지로 빌드 (환경 문제 완전 해결)
-      - name: 🐳 Build APK via Docker (Kivy/Buildozer)
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: ☕ Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 📦 Install system dependencies
         run: |
-          docker run --rm \
-            --volume "$(pwd)":/home/user/hostcwd \
-            --workdir /home/user/hostcwd \
-            -e ANDROIDSDK=/home/user/.buildozer/android/platform/android-sdk \
-            -e ANDROIDNDK=/home/user/.buildozer/android/platform/android-ndk-r25b \
-            kivy/buildozer:latest \
-            android debug
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            python3-pip git zip unzip \
+            autoconf libtool pkg-config zlib1g-dev \
+            libncurses5-dev libncursesw5-dev libtinfo5 \
+            cmake libffi-dev libssl-dev build-essential \
+            ccache libltdl-dev
+
+      - name: 🔧 Install Buildozer and Cython
+        run: |
+          pip install --upgrade pip
+          pip install buildozer==1.5.0
+          pip install cython==0.29.36
+
+      # ✅ SDK를 직접 설치하고 build-tools 33.0.2 명시
+      - name: 📱 Install Android SDK + Build-Tools 33.0.2
+        run: |
+          # commandlinetools 다운로드
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdtools.zip
+          unzip -q cmdtools.zip -d $HOME/android-sdk-setup
+          mkdir -p $HOME/.buildozer/android/platform/android-sdk/cmdline-tools/latest
+          cp -r $HOME/android-sdk-setup/cmdline-tools/* $HOME/.buildozer/android/platform/android-sdk/cmdline-tools/latest/
+
+          export ANDROID_SDK_ROOT=$HOME/.buildozer/android/platform/android-sdk
+          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
+
+          # 라이선스 동의
+          mkdir -p $ANDROID_SDK_ROOT/licenses
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_SDK_ROOT/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $ANDROID_SDK_ROOT/licenses/android-sdk-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> $ANDROID_SDK_ROOT/licenses/android-sdk-license
+          yes | sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses || true
+
+          # ✅ build-tools 33.0.2 설치 (37 아님!)
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT \
+            "platforms;android-33" \
+            "build-tools;33.0.2" \
+            "platform-tools"
+
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_ROOT/build-tools/33.0.2" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+
+      - name: 💾 Cache Buildozer global directory
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      - name: 🔨 Build Debug APK
+        run: |
+          yes | buildozer -v android debug 2>&1 | tee build.log
+        env:
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
 
       - name: 🔍 Locate and collect APK files
         run: |
-          echo "=== APK 검색 ==="
-          find . -name "*.apk" 2>/dev/null || echo "없음"
-
+          find . -name "*.apk" 2>/dev/null
           mkdir -p output
-
           if find bin -name "*.apk" 2>/dev/null | grep -q .; then
             cp bin/*.apk output/
-            echo "✅ bin/ 에서 복사"
           elif find .buildozer -name "*.apk" 2>/dev/null | grep -q .; then
             find .buildozer -name "*.apk" -exec cp {} output/ \;
-            echo "✅ .buildozer/ 에서 복사"
           else
-            echo "❌ APK를 찾지 못했습니다"
+            tail -100 build.log
             exit 1
           fi
-
           ls -lh output/
 
       - name: 📤 Upload APK artifact
@@ -57,14 +110,12 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: 📋 Upload logs on failure
+      - name: 📋 Upload build log on failure
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: build-failure-logs
-          path: |
-            .buildozer/logs/
-            *.log
+          name: build-failure-log
+          path: build.log
           retention-days: 7
 
   release:
@@ -72,29 +123,19 @@ jobs:
     runs-on: ubuntu-22.04
     needs: build-apk
     if: startsWith(github.ref, 'refs/tags/v')
-
     steps:
-      - name: ⬇️ Checkout
-        uses: actions/checkout@v4
-
-      - name: 📥 Download APK artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
           name: space-escape-game-debug-apk
           path: ./release-apk
-
-      - name: 🏷️ Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           name: "Space Escape Game ${{ github.ref_name }}"
           body: |
             ## 🚀 Space Escape Game ${{ github.ref_name }}
             **개발사:** 오리온 | **개발자:** 박시현
-
-            ### 설치 방법
-            1. 아래 `.apk` 파일을 안드로이드 기기에 다운로드
-            2. 설정 → 보안 → **출처를 알 수 없는 앱 설치** 허용
-            3. APK 파일 실행하여 설치
+            ### 설치: APK 다운로드 → 출처 알 수 없는 앱 허용 → 설치
           files: ./release-apk/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
