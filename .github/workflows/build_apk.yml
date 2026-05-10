@@ -35,7 +35,7 @@ jobs:
             autoconf libtool pkg-config zlib1g-dev \
             libncurses5-dev libncursesw5-dev libtinfo5 \
             cmake libffi-dev libssl-dev build-essential \
-            ccache libltdl-dev
+            ccache libltdl-dev adb
 
       - name: ☕ Set up Java 17
         run: |
@@ -48,6 +48,15 @@ jobs:
           pip install buildozer==1.5.0
           pip install cython==0.29.36
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      # ✅ 핵심 수정: Android SDK 라이선스 자동 동의
+      - name: 📜 Accept Android SDK licenses
+        run: |
+          mkdir -p $HOME/.buildozer/android/platform/android-sdk/licenses
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> $HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" > $HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
+          yes | sdkmanager --licenses 2>/dev/null || true
 
       - name: 💾 Cache Buildozer global directory
         uses: actions/cache@v4
@@ -68,9 +77,10 @@ jobs:
 
       - name: 🔨 Build Debug APK
         run: |
-          buildozer -v android debug 2>&1 | tee build.log
+          yes | buildozer -v android debug 2>&1 | tee build.log
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
-      # APK 위치를 찾아서 output/ 폴더로 모으기
       - name: 🔍 Locate and collect APK files
         run: |
           echo "=== 전체 APK 검색 ==="
@@ -78,16 +88,13 @@ jobs:
 
           mkdir -p output
 
-          # bin/ 우선, 없으면 .buildozer/ 안에서도 찾기
           if find bin -name "*.apk" 2>/dev/null | grep -q .; then
             cp bin/*.apk output/
-            echo "bin/ 에서 APK 복사 완료"
           elif find .buildozer -name "*.apk" 2>/dev/null | grep -q .; then
             find .buildozer -name "*.apk" -exec cp {} output/ \;
-            echo ".buildozer/ 에서 APK 복사 완료"
           else
-            echo "❌ APK 파일을 찾지 못했습니다. build.log 확인 필요"
-            tail -50 build.log
+            echo "❌ APK를 찾지 못했습니다"
+            tail -80 build.log
             exit 1
           fi
 
@@ -133,7 +140,6 @@ jobs:
           name: "Space Escape Game ${{ github.ref_name }}"
           body: |
             ## 🚀 Space Escape Game ${{ github.ref_name }}
-
             **개발사:** 오리온 | **개발자:** 박시현
 
             ### 설치 방법
