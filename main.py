@@ -1,635 +1,434 @@
-# 안드로이드: pygame_sdl2, PC: pygame 자동 선택
-try:
-    import pygame_sdl2
-    pygame_sdl2.import_as_pygame()
-    import pygame
-except ImportError:
-    import pygame
-import random
-import time
-import os
-import sys
-import json
+# ====================================================
+# Space Escape Game - Kivy 래퍼 (안드로이드용)
+# 원본: pygame / 변환: kivy Canvas + Clock
+# ====================================================
 
-# Android detection
-try:
-    import android
-    IS_ANDROID = True
-except ImportError:
-    IS_ANDROID = False
+import os, sys, json, random, time
 
-# Initialize Pygame
-pygame.init()
+os.environ['KIVY_NO_ENV_CONFIG'] = '1'
 
-# Constants - Use full screen on Android
-if IS_ANDROID:
-    info = pygame.display.Info()
-    WIDTH = info.current_w
-    HEIGHT = info.current_h
-    screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
-else:
-    WIDTH = 800
-    HEIGHT = 600
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+from kivy.app import App
+from kivy.uix.widget import Widget
+from kivy.graphics import Color, Rectangle, Ellipse, Line, Triangle
+from kivy.core.window import Window
+from kivy.clock import Clock
+from kivy.core.text import Label as CoreLabel
+from kivy.graphics.texture import Texture
 
+# ── 상수 ──────────────────────────────────────
+TIME_LIMIT = 30
 FPS = 60
-TIME_LIMIT = 30 # seconds
 
-# Scale factor for UI elements
-SCALE = min(WIDTH / 800, HEIGHT / 600)
-
-# Colors
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-RED = (255, 0, 0)
-GREEN = (0, 255, 0)
-
-pygame.display.set_caption("Space Escape Game")
-clock = pygame.time.Clock()
-
-# Fonts - Use bundled font on Android
-def get_font(size, bold=False):
-    font_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "NanumGothic.ttf")
-    if os.path.exists(font_path):
-        return pygame.font.Font(font_path, int(size * SCALE))
-    # Fallback
-    for name in ["malgungothic", "nanumgothic", "unifont", None]:
-        try:
-            return pygame.font.SysFont(name, int(size * SCALE), bold=bold)
-        except:
-            continue
-    return pygame.font.Font(None, int(size * SCALE))
-
-font = get_font(32)
-large_font = get_font(48, bold=True)
-
-# Paths
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
-
-# Ranking file path (writable on Android)
-if IS_ANDROID:
+# ── 랭킹 파일 경로 ────────────────────────────
+try:
     from android.storage import app_storage_path
     RANKING_FILE = os.path.join(app_storage_path(), "ranking.json")
-else:
+except ImportError:
     RANKING_FILE = "ranking.json"
 
-# Load Assets safely
-def load_image(name, scale_size):
-    try:
-        path = os.path.join(ASSETS_DIR, name)
-        image = pygame.image.load(path).convert_alpha()
-        return pygame.transform.scale(image, scale_size)
-    except Exception as e:
-        # Fallback if image doesn't exist
-        print(f"Warning: Could not load {name}, using fallback shape.")
-        surface = pygame.Surface(scale_size, pygame.SRCALPHA)
-        if name == "spaceship.png":
-            pygame.draw.polygon(surface, (0, 255, 255), [(scale_size[0]//2, 0), (0, scale_size[1]), (scale_size[0], scale_size[1])])
-        elif name == "heart.png":
-            pygame.draw.circle(surface, RED, (scale_size[0]//2, scale_size[1]//2), scale_size[0]//2)
-        elif name == "star.png":
-            pygame.draw.circle(surface, (255, 255, 0), (scale_size[0]//2, scale_size[1]//2), scale_size[0]//2)
-        elif name == "diamond.png":
-            pygame.draw.polygon(surface, (0, 0, 255), [(scale_size[0]//2, 0), (0, scale_size[1]//2), (scale_size[0]//2, scale_size[1]), (scale_size[0], scale_size[1]//2)])
-        elif name == "skull.png":
-            font_small = pygame.font.SysFont("malgungothic", 16, bold=True)
-            text = font_small.render("해골", True, WHITE)
-            surface.blit(text, (scale_size[0]//2 - text.get_width()//2, scale_size[1]//2 - text.get_height()//2))
-        elif name == "bomb.png":
-            font_small = pygame.font.SysFont("malgungothic", 16, bold=True)
-            text = font_small.render("폭탄", True, RED)
-            surface.blit(text, (scale_size[0]//2 - text.get_width()//2, scale_size[1]//2 - text.get_height()//2))
-        elif name == "psh.png":
-            font_small = pygame.font.SysFont("malgungothic", 16, bold=True)
-            text = font_small.render("박시현", True, (255, 0, 255))
-            surface.blit(text, (scale_size[0]//2 - text.get_width()//2, scale_size[1]//2 - text.get_height()//2))
-        elif name == "math.png":
-            font_small = pygame.font.SysFont("malgungothic", 16, bold=True)
-            text = font_small.render("수학", True, GREEN)
-            surface.blit(text, (scale_size[0]//2 - text.get_width()//2, scale_size[1]//2 - text.get_height()//2))
-        return surface
-
-spaceship_img = load_image("spaceship.png", (64, 64))
-heart_img = load_image("heart.png", (40, 40))
-star_img = load_image("star.png", (40, 40))
-diamond_img = load_image("diamond.png", (40, 40))
-skull_img = load_image("skull.png", (40, 40))
-bomb_img = load_image("bomb.png", (40, 40))
-psh_img = load_image("psh.png", (60, 60))
-math_img = load_image("math.png", (40, 40))
-
-try:
-    bg_img = pygame.image.load(os.path.join(ASSETS_DIR, "spaceship_bg.jpg")).convert()
-    bg_img = pygame.transform.scale(bg_img, (WIDTH, HEIGHT))
-except Exception as e:
-    bg_img = None
-
-ITEM_TYPES = [
-    {"name": "heart", "image": heart_img, "hp": 100, "score": 0, "prob": 0.10},
-    {"name": "star", "image": star_img, "hp": 0, "score": 100, "prob": 0.35},
-    {"name": "diamond", "image": diamond_img, "hp": 0, "score": 150, "prob": 0.20},
-    {"name": "skull", "image": skull_img, "hp": -50, "score": -500, "prob": 0.10},
-    {"name": "bomb", "image": bomb_img, "hp": -100, "score": -200, "prob": 0.15},
-    {"name": "psh", "image": psh_img, "hp": 0, "score": 0, "prob": 0.05},
-    {"name": "math", "image": math_img, "hp": 0, "score": 0, "prob": 0.05},
-]
-
+# ── 랭킹 로드/저장 ────────────────────────────
 def load_ranking():
-    if os.path.exists(RANKING_FILE):
-        try:
+    try:
+        if os.path.exists(RANKING_FILE):
             with open(RANKING_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
-            return []
+    except:
+        pass
     return []
 
 def save_ranking(ranking):
-    with open(RANKING_FILE, "w", encoding="utf-8") as f:
-        json.dump(ranking, f, ensure_ascii=False, indent=4)
+    try:
+        with open(RANKING_FILE, "w", encoding="utf-8") as f:
+            json.dump(ranking, f, ensure_ascii=False, indent=4)
+    except:
+        pass
 
+# ── 수학 문제 생성 ────────────────────────────
 def generate_math_problem(score=0):
     level = min(3, max(1, (score // 5000) + 1))
-    problem_types = ['add', 'sub', 'mul', 'div', 'div_decimal', 'unit_km_m', 'unit_cm_mm', 'area_rect', 'percentage', 'sequence']
-    ptype = random.choice(problem_types)
-    
+    ptype = random.choice(['add','sub','mul','div'])
     if ptype == 'add':
-        a = random.randint(11 * level, 99 * level)
-        b = random.randint(11 * level, 99 * level)
-        ans = a + b
-        return f"{a} + {b} = ?", str(ans)
+        a, b = random.randint(11*level, 99*level), random.randint(11*level, 99*level)
+        return f"{a} + {b} = ?", str(a+b)
     elif ptype == 'sub':
-        a = random.randint(50 * level, 150 * level)
-        b = random.randint(11 * level, 49 * level)
-        ans = a - b
-        return f"{a} - {b} = ?", str(ans)
+        a, b = random.randint(50*level, 150*level), random.randint(11*level, 49*level)
+        return f"{a} - {b} = ?", str(a-b)
     elif ptype == 'mul':
-        a = random.randint(11 * level, 25 * level)
-        b = random.randint(2 * level, 9)
-        ans = a * b
-        return f"{a} × {b} = ?", str(ans)
-    elif ptype == 'div':
+        a, b = random.randint(11*level, 25*level), random.randint(2*level, 9)
+        return f"{a} × {b} = ?", str(a*b)
+    else:
         b = random.randint(2, 9)
-        ans = random.randint(11 * level, 30 * level)
-        a = b * ans
-        return f"{a} ÷ {b} = ?", str(ans)
-    elif ptype == 'div_decimal':
-        b = random.choice([2, 4, 5, 8, 10])
-        a = random.randint(11, 30)
-        ans = a / b
-        ans_str = str(int(ans)) if ans.is_integer() else str(ans)
-        return f"{a} ÷ {b} = ?", ans_str
-    elif ptype == 'unit_km_m':
-        km = random.randint(2 * level, 9 * level)
-        return f"{km}km는 몇 m입니까?", str(km * 1000)
-    elif ptype == 'unit_cm_mm':
-        cm = random.randint(5 * level, 20 * level)
-        return f"{cm}cm는 몇 mm입니까?", str(cm * 10)
-    elif ptype == 'area_rect':
-        w = random.randint(5 * level, 15 * level)
-        h = random.randint(4 * level, 10 * level)
-        return f"가로 {w}, 세로 {h} 직사각형 넓이는?", str(w * h)
-    elif ptype == 'percentage':
-        base = random.choice([50, 100, 200, 300, 400, 500]) * level
-        percent = random.choice([10, 20, 25, 50])
-        ans = base * percent // 100
-        return f"{base}의 {percent}%는 얼마입니까?", str(ans)
-    elif ptype == 'sequence':
-        start = random.randint(2 * level, 10 * level)
-        step = random.randint(2 * level, 5 * level)
-        seq = [start + step * i for i in range(4)]
-        return f"{seq[0]}, {seq[1]}, {seq[2]}, {seq[3]}, ?에 올 수는?", str(start + step * 4)
+        ans = random.randint(11*level, 30*level)
+        return f"{b*ans} ÷ {b} = ?", str(ans)
 
-class Player:
-    def __init__(self):
-        self.image = spaceship_img
-        self.rect = self.image.get_rect()
-        self.rect.center = (WIDTH // 2, HEIGHT - 100)
+# ── 아이템 타입 정의 ─────────────────────────
+ITEM_DEFS = [
+    {"name":"heart",   "color":(1,0.2,0.2,1), "hp":100,  "score":0,    "prob":0.10},
+    {"name":"star",    "color":(1,1,0,1),      "hp":0,    "score":100,  "prob":0.35},
+    {"name":"diamond", "color":(0,0.5,1,1),    "hp":0,    "score":150,  "prob":0.20},
+    {"name":"skull",   "color":(0.5,0.5,0.5,1),"hp":-50,  "score":-500, "prob":0.10},
+    {"name":"bomb",    "color":(1,0.3,0,1),    "hp":-100, "score":-200, "prob":0.15},
+    {"name":"psh",     "color":(1,0,1,1),      "hp":0,    "score":0,    "prob":0.05},
+    {"name":"math",    "color":(0,1,0.5,1),    "hp":0,    "score":0,    "prob":0.05},
+]
+
+def get_random_item(w, h, speed_mult=1.0):
+    r = random.random()
+    total = sum(d["prob"] for d in ITEM_DEFS)
+    r *= total
+    cum = 0
+    for d in ITEM_DEFS:
+        cum += d["prob"]
+        if r <= cum:
+            size = 50
+            return {
+                "name": d["name"],
+                "color": d["color"],
+                "hp": d["hp"],
+                "score": d["score"],
+                "x": random.randint(0, int(w)-size),
+                "y": float(h),
+                "size": size,
+                "speed": random.uniform(3, 7) * speed_mult,
+            }
+    return get_random_item(w, h, speed_mult)
+
+# ── 텍스트 그리기 헬퍼 ───────────────────────
+def draw_label(canvas, text, x, y, font_size=24, color=(1,1,1,1), bold=False):
+    lbl = CoreLabel(text=text, font_size=font_size, bold=bold,
+                    color=color, font_name="Roboto")
+    lbl.refresh()
+    tex = lbl.texture
+    with canvas:
+        Color(*color)
+        Rectangle(texture=tex,
+                  pos=(x - tex.width//2, y - tex.height//2),
+                  size=tex.size)
+
+# ── 메인 게임 위젯 ────────────────────────────
+class GameWidget(Widget):
+    # 상태
+    STATE_START    = -1
+    STATE_PLAYING  = 0
+    STATE_NAME     = 1
+    STATE_RANKING  = 2
+    STATE_MATH     = 3
+    STATE_MATH_RES = 4
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.reset_game()
+        Window.bind(on_key_down=self.on_key_down)
+        Clock.schedule_interval(self.update, 1/FPS)
+        Clock.schedule_interval(self.spawn_item, 0.439)
+
+    def reset_game(self):
+        w, h = Window.width, Window.height
+        self.state = self.STATE_START
+        self.start_screen_time = time.time()
+        self.px = w / 2
+        self.py = h * 0.15
+        self.p_size = 60
         self.hp = 100
         self.score = 0
+        self.items = []
+        self.ranking = load_ranking()
+        self.current_time_limit = TIME_LIMIT
+        self.start_time = time.time()
+        self.remaining = TIME_LIMIT
+        self.dragging = False
+        self.input_text = ""
+        self.total_score = 0
+        self.play_time = 0
+        self.invincible = 0
+        self.shake = 0
+        self.math_problem = ""
+        self.math_answer = ""
+        self.math_input = ""
+        self.math_result_msg = ""
+        self.math_result_time = 0
+        self.last_score_bonus = 0
+
+    def spawn_item(self, dt):
+        if self.state != self.STATE_PLAYING:
+            return
+        w, h = Window.width, Window.height
+        elapsed = time.time() - self.start_time
+        speed_mult = 1.0 + (elapsed / 30.0) * 1.5
+        self.items.append(get_random_item(w, h, speed_mult))
+
+    def update(self, dt):
+        w, h = Window.width, Window.height
+        now = time.time()
+
+        if self.state == self.STATE_START:
+            if now - self.start_screen_time >= 5.0:
+                self.state = self.STATE_PLAYING
+                self.start_time = now
+
+        elif self.state == self.STATE_MATH_RES:
+            if now - self.math_result_time >= 1.5:
+                self.state = self.STATE_PLAYING
+
+        elif self.state == self.STATE_PLAYING:
+            if self.invincible > 0:
+                self.invincible -= 1
+            if self.shake > 0:
+                self.shake -= 1
+
+            elapsed = now - self.start_time
+            self.remaining = max(0, int(self.current_time_limit - elapsed))
+
+            bonus = self.score // 10000
+            if bonus > self.last_score_bonus:
+                self.last_score_bonus = bonus
+                self.current_time_limit += 5
+
+            for item in self.items[:]:
+                item["y"] -= item["speed"]
+                # 충돌 검사
+                dx = abs(self.px - (item["x"] + item["size"]//2))
+                dy = abs(self.py - (item["y"] + item["size"]//2))
+                if dx < (self.p_size + item["size"]) // 2 and dy < (self.p_size + item["size"]) // 2:
+                    if item["name"] == "psh":
+                        self.score += 10000
+                        self.current_time_limit += 5
+                    elif item["name"] == "math":
+                        self.math_problem, self.math_answer = generate_math_problem(self.score)
+                        self.math_input = ""
+                        self.state = self.STATE_MATH
+                    else:
+                        if not (self.invincible > 0 and item["hp"] < 0):
+                            self.hp += item["hp"]
+                            self.score += item["score"]
+                            if item["hp"] < 0:
+                                self.invincible = 60
+                                self.shake = 15
+                    self.items.remove(item)
+                    continue
+                if item["y"] < -item["size"]:
+                    self.items.remove(item)
+
+            if self.remaining == 0 or self.hp <= 0:
+                self.hp = max(0, self.hp)
+                self.total_score = self.hp + self.score
+                self.play_time = int(now - self.start_time)
+                if len(self.ranking) < 10 or (self.ranking and self.total_score > self.ranking[-1]["score"]) or len(self.ranking) == 0:
+                    self.state = self.STATE_NAME
+                    self.input_text = ""
+                else:
+                    self.state = self.STATE_RANKING
+
+        self.draw_scene()
+
+    def draw_scene(self):
+        w, h = Window.width, Window.height
+        self.canvas.clear()
+
+        ox = random.randint(-6,6) if self.shake > 0 else 0
+        oy = random.randint(-6,6) if self.shake > 0 else 0
+
+        with self.canvas:
+            # 배경
+            Color(0.02, 0.02, 0.1, 1)
+            Rectangle(pos=(0,0), size=(w,h))
+
+            # 별 배경
+            random.seed(42)
+            Color(1,1,1,0.4)
+            for _ in range(80):
+                sx = random.randint(0, int(w))
+                sy = random.randint(0, int(h))
+                Ellipse(pos=(sx,sy), size=(2,2))
+            random.seed()
+
+        if self.state == self.STATE_START:
+            self._draw_start(w, h)
+        elif self.state == self.STATE_PLAYING:
+            self._draw_playing(w, h, ox, oy)
+        elif self.state == self.STATE_MATH:
+            self._draw_math(w, h)
+        elif self.state == self.STATE_MATH_RES:
+            self._draw_math_result(w, h)
+        elif self.state == self.STATE_NAME:
+            self._draw_name_input(w, h)
+        elif self.state == self.STATE_RANKING:
+            self._draw_ranking(w, h)
+
+    def _draw_start(self, w, h):
+        now = time.time()
+        countdown = max(1, 5 - int(now - self.start_screen_time))
+        draw_label(self.canvas, "🚀 Space Escape Game", w//2, h*0.82, 32, (0,1,1,1), True)
+        draw_label(self.canvas, "-날아라 박시현호-", w//2, h*0.75, 22, (1,0.84,0,1))
+        draw_label(self.canvas, f"게임 시작까지: {countdown}초", w//2, h*0.68, 20, (1,1,1,1))
+
+        items_info = [
+            ("❤️ 하트 10%", "체력 +100", (1,0.4,0.4,1)),
+            ("⭐ 별 35%",  "+100점",   (1,1,0,1)),
+            ("💎 다이아 20%","+150점",  (0,0.5,1,1)),
+            ("💀 해골 10%", "체력-50, -500점", (0.6,0.6,0.6,1)),
+            ("💣 폭탄 15%", "체력-100, -200점",(1,0.4,0,1)),
+            ("👤 박시현 5%","+10000점!",  (1,0,1,1)),
+            ("🔢 수학 5%",  "정답+5000, 오답-5000",(0,1,0.5,1)),
+        ]
+        for i, (name, effect, color) in enumerate(items_info):
+            draw_label(self.canvas, f"{name}  |  {effect}", w//2, h*0.58 - i*h*0.07, 16, color)
+
+        draw_label(self.canvas, "개발사: 오리온  개발자: 박시현 ver.1", w//2, h*0.04, 14, (0.7,0.7,0.7,1))
+
+    def _draw_item(self, item, ox, oy):
+        x, y, size = item["x"]+ox, item["y"]+oy, item["size"]
+        name = item["name"]
+        with self.canvas:
+            Color(*item["color"])
+            if name == "star":
+                Ellipse(pos=(x, y), size=(size, size))
+            elif name == "diamond":
+                # 마름모
+                Line(points=[x+size//2, y+size, x+size, y+size//2,
+                              x+size//2, y,      x, y+size//2, x+size//2, y+size], width=2)
+                Color(*(item["color"][:3]), 0.4)
+                Triangle(points=[x+size//2, y+size, x+size, y+size//2, x+size//2, y])
+                Triangle(points=[x+size//2, y+size, x, y+size//2, x+size//2, y])
+            elif name in ("skull","bomb","psh","math"):
+                Rectangle(pos=(x,y), size=(size,size))
+                draw_label(self.canvas, {"skull":"💀","bomb":"💣","psh":"박시현","math":"수학"}[name],
+                           x+size//2, y+size//2, 14, (1,1,1,1))
+            else:
+                Ellipse(pos=(x, y), size=(size, size))
+
+    def _draw_playing(self, w, h, ox, oy):
+        # 아이템
+        for item in self.items:
+            self._draw_item(item, ox, oy)
+
+        # 플레이어 (우주선 삼각형)
+        if self.invincible == 0 or (self.invincible % 10 < 5):
+            px, py = self.px + ox, self.py + oy
+            s = self.p_size // 2
+            with self.canvas:
+                Color(0, 1, 1, 1)
+                Triangle(points=[px, py+s, px-s, py-s, px+s, py-s])
+                Color(1, 0.5, 0, 0.6)
+                Triangle(points=[px, py-s, px-s//2, py-s-10, px+s//2, py-s-10])
+
+        # HUD
+        hp_color = (0.3,1,0.3,1) if self.hp > 50 else (1,0.3,0.3,1)
+        draw_label(self.canvas, f"⏱ {self.remaining}s", w*0.15, h*0.95, 22, (1,1,1,1))
+        draw_label(self.canvas, f"❤ {self.hp}", w*0.5, h*0.95, 22, hp_color)
+        draw_label(self.canvas, f"⭐ {self.score}", w*0.85, h*0.95, 22, (1,1,0,1))
+
+        # HP 바
+        with self.canvas:
+            bar_w = w * 0.4
+            bx = w*0.3
+            by = h*0.91
+            Color(0.3,0.3,0.3,1)
+            Rectangle(pos=(bx, by), size=(bar_w, 10))
+            Color(*hp_color[:3], 1)
+            Rectangle(pos=(bx, by), size=(bar_w * min(1, self.hp/100), 10))
+
+    def _draw_math(self, w, h):
+        with self.canvas:
+            Color(0,0,0,0.7)
+            Rectangle(pos=(0,0), size=(w,h))
+        draw_label(self.canvas, "🔢 수학 문제!", w//2, h*0.65, 30, (0,1,1,1), True)
+        draw_label(self.canvas, self.math_problem,  w//2, h*0.52, 26, (1,1,1,1))
+        draw_label(self.canvas, f"답: {self.math_input}_", w//2, h*0.42, 24, (0,1,0,1))
+        draw_label(self.canvas, "[엔터=제출  백스페이스=지우기]", w//2, h*0.32, 16, (0.7,0.7,0.7,1))
+
+    def _draw_math_result(self, w, h):
+        ok = "정답" in self.math_result_msg
+        color = (0.3,1,0.3,1) if ok else (1,0.3,0.3,1)
+        draw_label(self.canvas, self.math_result_msg, w//2, h//2, 30, color, True)
+
+    def _draw_name_input(self, w, h):
+        with self.canvas:
+            Color(0,0,0,0.75)
+            Rectangle(pos=(0,0), size=(w,h))
+        draw_label(self.canvas, "🏆 랭킹 등록!", w//2, h*0.65, 30, (1,0.84,0,1), True)
+        draw_label(self.canvas, f"최종점수: {self.total_score}점", w//2, h*0.55, 22, (1,1,1,1))
+        draw_label(self.canvas, "이름 입력 후 엔터:", w//2, h*0.46, 20, (1,1,1,1))
+        draw_label(self.canvas, self.input_text + "_", w//2, h*0.37, 24, (0,1,0.5,1))
+
+    def _draw_ranking(self, w, h):
+        with self.canvas:
+            Color(0,0,0,0.8)
+            Rectangle(pos=(0,0), size=(w,h))
+        draw_label(self.canvas, "🏆 TOP 10 랭킹", w//2, h*0.9, 30, (1,0.84,0,1), True)
+        medals = ["🥇","🥈","🥉"]
+        for i, r in enumerate(self.ranking[:10]):
+            medal = medals[i] if i < 3 else f"{i+1}."
+            color = [(1,0.84,0,1),(0.8,0.8,0.8,1),(0.8,0.5,0.2,1)][i] if i<3 else (0.9,0.9,0.9,1)
+            draw_label(self.canvas, f"{medal} {r['name']}  {r['score']}점",
+                       w//2, h*0.8 - i*h*0.07, 20, color)
+        # 다시하기 버튼
+        with self.canvas:
+            Color(0,0.7,0,1)
+            bw, bh2 = 200, 55
+            bx = w//2 - bw//2
+            by = h*0.05
+            Rectangle(pos=(bx, by), size=(bw, bh2))
+        draw_label(self.canvas, "다시하기", w//2, h*0.05+27, 22, (0,0,0,1), True)
+        self._restart_rect = (w//2-100, h*0.05, 200, 55)
+
+    # ── 터치/마우스 이벤트 ───────────────────
+    def on_touch_down(self, touch):
+        w, h = Window.width, Window.height
+        if self.state == self.STATE_PLAYING:
+            dx = abs(touch.x - self.px)
+            dy = abs(touch.y - self.py)
+            if dx < self.p_size and dy < self.p_size:
+                self.dragging = True
+        elif self.state == self.STATE_RANKING:
+            rx, ry, rw2, rh2 = self._restart_rect
+            if rx <= touch.x <= rx+rw2 and ry <= touch.y <= ry+rh2:
+                self.reset_game()
+
+    def on_touch_move(self, touch):
+        if self.state == self.STATE_PLAYING and self.dragging:
+            w, h = Window.width, Window.height
+            self.px = max(self.p_size//2, min(touch.x, w - self.p_size//2))
+            self.py = max(self.p_size//2, min(touch.y, h - self.p_size//2))
+
+    def on_touch_up(self, touch):
         self.dragging = False
 
-    def draw(self, surface, offset_x=0, offset_y=0):
-        surface.blit(self.image, (self.rect.x + offset_x, self.rect.y + offset_y))
-
-class FallingItem:
-    def __init__(self, item_info, speed_multiplier=1.0):
-        self.info = item_info
-        self.image = item_info["image"]
-        self.rect = self.image.get_rect()
-        self.rect.x = random.randint(0, WIDTH - self.rect.width)
-        self.y = -50.0
-        self.rect.y = int(self.y)
-        self.speed = random.randint(3, 7) * 0.945 * speed_multiplier # Reduced by 10% (1.05 * 0.9)
-        self.spawn_time = time.time()
-
-    def update(self):
-        self.y += self.speed
-        self.rect.y = int(self.y)
-
-    def draw(self, surface, offset_x=0, offset_y=0):
-        surface.blit(self.image, (self.rect.x + offset_x, self.rect.y + offset_y))
-
-def get_random_item(speed_multiplier=1.0, elapsed_time=0):
-    is_skull_time = False
-    if elapsed_time > 0 and int(elapsed_time) % 15 == 0:
-        is_skull_time = True
-
-    probs = []
-    for item in ITEM_TYPES:
-        p = item["prob"]
-        if is_skull_time:
-            if item["name"] == "skull":
-                p = 0.50
-            else:
-                p = (item["prob"] / 0.90) * 0.50
-        probs.append((item, p))
-        
-    total_prob = sum(p for _, p in probs)
-    r = random.uniform(0, total_prob)
-    cumulative = 0
-    for item, p in probs:
-        cumulative += p
-        if r <= cumulative:
-            return FallingItem(item, speed_multiplier)
-    return FallingItem(ITEM_TYPES[1], speed_multiplier) # default star
-
-def main():
-    # Load Music
-    music_loaded = False
-    music_files = []
-    for ext in ['.mid', '.mp3', '.wav']:
-        for base in ['midi', 'midi2']:
-            music_path = os.path.join(ASSETS_DIR, f"{base}{ext}")
-            if os.path.exists(music_path):
-                music_files.append(music_path)
-    
-    MUSIC_END = pygame.USEREVENT + 2
-    pygame.mixer.music.set_endevent(MUSIC_END)
-    current_music_index = 0
-            
-    if music_files:
-        try:
-            pygame.mixer.music.load(music_files[current_music_index])
-            pygame.mixer.music.play()
-            music_loaded = True
-        except:
-            pass
-    if not music_loaded:
-        print("Warning: Could not load midi background music.")
-
-    player = Player()
-    items = []
-    
-    current_time_limit = TIME_LIMIT
-    start_time = time.time()
-    
-    # Game States
-    STATE_START = -1
-    STATE_PLAYING = 0
-    STATE_NAME_INPUT = 1
-    STATE_RANKING = 2
-    STATE_MATH = 3
-    STATE_MATH_RESULT = 4
-    state = STATE_START
-    start_screen_timer = time.time()
-    
-    # Variables for Name Input
-    input_text = ""
-    composition_text = ""
-    ranking = load_ranking()
-    total_score = 0
-    play_time = 0
-    
-    # Variables for Math Problem
-    math_problem = ""
-    math_answer = ""
-    math_input = ""
-    math_start_time = 0
-    math_result_msg = ""
-    math_result_timer = 0
-    
-    # Variables for FX and Mechanics
-    shake_timer = 0
-    invincible_timer = 0
-    last_score_bonus = 0
-    last_music_period = 0
-    
-    # Custom event for spawning items
-    SPAWN_EVENT = pygame.USEREVENT + 1
-    pygame.time.set_timer(SPAWN_EVENT, 439) # Spawn every ~0.439s (+3% frequency again)
-
-    running = True
-    while running:
-        current_time = time.time()
-        
-        if state == STATE_START:
-            if current_time - start_screen_timer >= 5.0:
-                state = STATE_PLAYING
-                start_time = time.time()
-                
-        if state == STATE_MATH_RESULT:
-            if current_time - math_result_timer >= 1.5:
-                start_time += (current_time - math_start_time)
-                state = STATE_PLAYING
-                
-        if state == STATE_PLAYING:
-            if invincible_timer > 0:
-                invincible_timer -= 1
-            if shake_timer > 0:
-                shake_timer -= 1
-                
-            if player.score // 10000 > last_score_bonus:
-                last_score_bonus = player.score // 10000
-                current_time_limit += 5
-                
-            elapsed_time = current_time - start_time
-            remaining_time = max(0, int(current_time_limit - elapsed_time))
-            
-            current_music_period = int(elapsed_time) // 20
-            if current_music_period > last_music_period:
-                last_music_period = current_music_period
-                if music_files:
-                    current_music_index = (current_music_index + 1) % len(music_files)
-                    try:
-                        pygame.mixer.music.load(music_files[current_music_index])
-                        pygame.mixer.music.play()
-                    except:
-                        pass
-
-            if remaining_time == 0 or player.hp <= 0:
-                total_score = max(0, player.hp) + player.score
-                play_time = int(elapsed_time)
-                if len(ranking) < 10 or total_score > ranking[-1]["score"]:
-                    state = STATE_NAME_INPUT
-                    pygame.key.start_text_input()
+    # ── 키보드 입력 ──────────────────────────
+    def on_key_down(self, window, key, *args):
+        from kivy.core.window import Keyboard
+        if self.state == self.STATE_MATH:
+            if key == Keyboard.keycodes.get('enter', 13) or key == 13:
+                if self.math_input == self.math_answer:
+                    self.score += 5000
+                    self.math_result_msg = "정답입니다! (+5000점)"
                 else:
-                    state = STATE_RANKING
+                    self.score -= 5000
+                    self.math_result_msg = "틀렸습니다! (-5000점)"
+                self.state = self.STATE_MATH_RES
+                self.math_result_time = time.time()
+            elif key == Keyboard.keycodes.get('backspace', 8) or key == 8:
+                self.math_input = self.math_input[:-1]
+            elif 48 <= key <= 57:  # 숫자 0-9
+                self.math_input += chr(key)
+        elif self.state == self.STATE_NAME:
+            if key == 13:  # Enter
+                name = self.input_text.strip() or "Unknown"
+                self.ranking.append({"name": name, "score": self.total_score, "time": self.play_time})
+                self.ranking.sort(key=lambda x: x["score"], reverse=True)
+                self.ranking = self.ranking[:10]
+                save_ranking(self.ranking)
+                self.state = self.STATE_RANKING
+            elif key == 8:  # Backspace
+                self.input_text = self.input_text[:-1]
+            elif 32 <= key <= 126:
+                self.input_text += chr(key)
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-                
-            if event.type == MUSIC_END:
-                if music_files:
-                    current_music_index = (current_music_index + 1) % len(music_files)
-                    try:
-                        pygame.mixer.music.load(music_files[current_music_index])
-                        pygame.mixer.music.play()
-                    except:
-                        pass
-            
-            if state == STATE_PLAYING:
-                if event.type == pygame.MOUSEBUTTONDOWN or event.type == pygame.FINGERDOWN:
-                    if event.type == pygame.FINGERDOWN:
-                        pos = (int(event.x * WIDTH), int(event.y * HEIGHT))
-                    else:
-                        pos = event.pos
-                    if player.rect.collidepoint(pos):
-                        player.dragging = True
-                
-                elif event.type == pygame.MOUSEBUTTONUP or event.type == pygame.FINGERUP:
-                    player.dragging = False
-                
-                elif event.type == pygame.MOUSEMOTION or event.type == pygame.FINGERMOTION:
-                    if player.dragging:
-                        if event.type == pygame.FINGERMOTION:
-                            pos = (int(event.x * WIDTH), int(event.y * HEIGHT))
-                        else:
-                            pos = event.pos
-                        # Move player with touch/mouse but keep centered
-                        player.rect.center = pos
-                        # Clamp to screen
-                        player.rect.x = max(0, min(player.rect.x, WIDTH - player.rect.width))
-                        player.rect.y = max(0, min(player.rect.y, HEIGHT - player.rect.height))
-
-                elif event.type == SPAWN_EVENT:
-                    speed_mult = 1.0 + (elapsed_time / 30.0) * 1.5 if state == STATE_PLAYING else 1.0
-                    items.append(get_random_item(speed_mult, elapsed_time if state == STATE_PLAYING else 0))
-
-            elif state == STATE_MATH:
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_RETURN:
-                        if math_input == math_answer:
-                            player.score += 5000
-                            math_result_msg = "정답입니다! (+5000점)"
-                        else:
-                            player.score -= 5000
-                            math_result_msg = "틀렸습니다! (-5000점)"
-                        state = STATE_MATH_RESULT
-                        math_result_timer = time.time()
-                        math_input = ""
-                        pygame.key.stop_text_input()
-                    elif event.key == pygame.K_BACKSPACE:
-                        math_input = math_input[:-1]
-                elif event.type == pygame.TEXTINPUT:
-                    if event.text.isdigit() or event.text in ['-', '.']:
-                        if len(math_input) < 10:
-                            math_input += event.text
-            
-            elif state == STATE_NAME_INPUT:
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_RETURN:
-                        pygame.key.stop_text_input()
-                        final_name = input_text + composition_text
-                        if not final_name.strip():
-                            final_name = "Unknown"
-                        ranking.append({"name": final_name, "score": total_score, "time": play_time})
-                        ranking.sort(key=lambda x: x["score"], reverse=True)
-                        ranking = ranking[:10]
-                        save_ranking(ranking)
-                        state = STATE_RANKING
-                    elif event.key == pygame.K_BACKSPACE:
-                        if len(composition_text) == 0 and len(input_text) > 0:
-                            input_text = input_text[:-1]
-                elif event.type == pygame.TEXTINPUT:
-                    if len(input_text) < 15:
-                        input_text += event.text
-                        input_text = input_text[:15]
-                    composition_text = ""
-                elif event.type == pygame.TEXTEDITING:
-                    if len(input_text) + len(event.text) <= 15:
-                        composition_text = event.text
-                    else:
-                        composition_text = event.text[:15 - len(input_text)]
-            
-            elif state == STATE_RANKING:
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    # Check individual delete buttons
-                    clicked_delete = False
-                    for i in range(len(ranking)):
-                        delete_rect = pygame.Rect(WIDTH - 100, 130 + i * 40, 30, 30)
-                        if delete_rect.collidepoint(event.pos):
-                            ranking.pop(i)
-                            save_ranking(ranking)
-                            clicked_delete = True
-                            break
-                    if clicked_delete:
-                        continue
-                        
-                    restart_rect = pygame.Rect(WIDTH//2 - 75, HEIGHT - 80, 150, 50)
-                    
-                    if restart_rect.collidepoint(event.pos):
-                        # Restart game
-                        player = Player()
-                        items.clear()
-                        current_time_limit = TIME_LIMIT
-                        state = STATE_START
-                        start_screen_timer = time.time()
-                        input_text = ""
-                        composition_text = ""
-
-        if state == STATE_PLAYING:
-            # Update items
-            for item in items[:]:
-                item.update()
-                
-                # Check collision
-                if player.rect.colliderect(item.rect):
-                    if invincible_timer > 0 and item.info["hp"] < 0:
-                        pass # Ignore damage items while invincible
-                    elif item.info["name"] == "psh":
-                        player.score += 10000
-                        items.remove(item)
-                    elif item.info["name"] == "math":
-                        math_problem, math_answer = generate_math_problem(player.score)
-                        math_input = ""
-                        math_start_time = time.time()
-                        pygame.key.start_text_input()
-                        state = STATE_MATH
-                        items.remove(item)
-                    else:
-                        player.hp += item.info["hp"]
-                        player.score += item.info["score"]
-                        if item.info["hp"] < 0:
-                            invincible_timer = 60
-                            shake_timer = 15
-                        items.remove(item)
-                    continue
-                
-                # Remove if off screen
-                if item.rect.y > HEIGHT:
-                    items.remove(item)
-
-        # Drawing
-        offset_x, offset_y = 0, 0
-        if state == STATE_PLAYING and shake_timer > 0:
-            offset_x = random.randint(-8, 8)
-            offset_y = random.randint(-8, 8)
-
-        if bg_img:
-            screen.blit(bg_img, (0, 0))
-        else:
-            screen.fill(BLACK)
-
-        if state == STATE_START:
-            title_text = large_font.render("Space Game Asset Version", True, (0, 255, 255))
-            subtitle_text = font.render("-날아라 박시현호-", True, (255, 215, 0))
-            countdown = max(1, 5 - int(current_time - start_screen_timer))
-            countdown_text = font.render(f"게임 시작까지: {countdown}초", True, WHITE)
-            
-            font_small = pygame.font.SysFont("malgungothic", 20)
-            dev_text = font_small.render("개발사: 오리온, 개발자: 박시현 2026.05.09 ver.1", True, (200, 200, 200))
-            
-            # Shift title up
-            screen.blit(title_text, (WIDTH//2 - title_text.get_width()//2, 30))
-            screen.blit(subtitle_text, (WIDTH//2 - subtitle_text.get_width()//2, 80))
-            screen.blit(countdown_text, (WIDTH//2 - countdown_text.get_width()//2, 120))
-            
-            # Draw Item Table
-            korean_names = {
-                "heart": "하트",
-                "star": "별",
-                "diamond": "다이아몬드",
-                "skull": "해골",
-                "bomb": "폭탄",
-                "psh": "박시현(보너스)",
-                "math": "수학문제"
-            }
-            
-            for idx, item in enumerate(ITEM_TYPES):
-                pct = int(item["prob"] * 100)
-                
-                if item["name"] == "psh":
-                    score_str = "점수: 10000, 시간: +5초"
-                elif item["name"] == "math":
-                    score_str = "정답: +5000, 오답: -5000"
-                else:
-                    score_str = f"점수: {item['score']}"
-                    if item["hp"] != 0:
-                        score_str += f", 체력: {item['hp']}"
-                
-                kor_name = korean_names.get(item["name"], item["name"].upper())
-                info_str = f"{kor_name} - {pct}% | {score_str}"
-                info_text = font_small.render(info_str, True, WHITE)
-                
-                # Draw icon and text
-                item_img = pygame.transform.scale(item["image"], (30, 30))
-                screen.blit(item_img, (WIDTH//2 - 250, 180 + idx * 40))
-                screen.blit(info_text, (WIDTH//2 - 200, 180 + idx * 40 + 5))
-                
-            screen.blit(dev_text, (WIDTH - dev_text.get_width() - 10, HEIGHT - dev_text.get_height() - 10))
-
-        elif state == STATE_PLAYING:
-            if invincible_timer == 0 or (invincible_timer % 10 < 5):
-                player.draw(screen, offset_x, offset_y)
-            for item in items:
-                item.draw(screen, offset_x, offset_y)
-
-            # Draw HUD
-            hud_text = f"Time: {remaining_time}s   HP: {player.hp}   Score: {player.score}"
-            text_surface = font.render(hud_text, True, WHITE)
-            screen.blit(text_surface, (10 + offset_x, 10 + offset_y))
-            
-        elif state == STATE_MATH_RESULT:
-            color = GREEN if "정답" in math_result_msg else RED
-            res_text = large_font.render(math_result_msg, True, color)
-            screen.blit(res_text, (WIDTH//2 - res_text.get_width()//2, HEIGHT//2 - res_text.get_height()//2))
-            
-        elif state == STATE_MATH:
-            title_text = large_font.render("수학 문제!", True, (0, 255, 255))
-            desc_text = font.render(f"문제: {math_problem}", True, WHITE)
-            input_surface = font.render(f"정답 입력: {math_input}", True, GREEN)
-            
-            screen.blit(title_text, (WIDTH//2 - title_text.get_width()//2, HEIGHT//2 - 100))
-            screen.blit(desc_text, (WIDTH//2 - desc_text.get_width()//2, HEIGHT//2 - 30))
-            screen.blit(input_surface, (WIDTH//2 - input_surface.get_width()//2, HEIGHT//2 + 20))
-            
-        elif state == STATE_NAME_INPUT:
-            title_text = large_font.render("랭킹 등록!", True, (255, 215, 0))
-            desc_text = font.render("이름을 입력하세요 (엔터로 완료):", True, WHITE)
-            name_text = font.render(input_text + composition_text, True, GREEN)
-            
-            screen.blit(title_text, (WIDTH//2 - title_text.get_width()//2, HEIGHT//2 - 100))
-            screen.blit(desc_text, (WIDTH//2 - desc_text.get_width()//2, HEIGHT//2 - 30))
-            screen.blit(name_text, (WIDTH//2 - name_text.get_width()//2, HEIGHT//2 + 20))
-            
-        elif state == STATE_RANKING:
-            title_text = large_font.render("TOP 10 랭킹", True, (255, 215, 0))
-            screen.blit(title_text, (WIDTH//2 - title_text.get_width()//2, 50))
-            
-            for i, rank in enumerate(ranking):
-                time_val = rank.get('time', 0)
-                rank_text = font.render(f"{i+1}. {rank['name']} - {rank['score']}점 ({time_val}초)", True, WHITE)
-                screen.blit(rank_text, (50, 130 + i * 40))
-                
-                # Draw individual delete button
-                delete_rect = pygame.Rect(WIDTH - 100, 130 + i * 40, 30, 30)
-                pygame.draw.rect(screen, RED, delete_rect)
-                del_text = font.render("X", True, WHITE)
-                screen.blit(del_text, (delete_rect.centerx - del_text.get_width()//2, delete_rect.centery - del_text.get_height()//2))
-                
-            # Restart Button
-            restart_rect = pygame.Rect(WIDTH//2 - 75, HEIGHT - 80, 150, 50)
-            pygame.draw.rect(screen, GREEN, restart_rect)
-            restart_text = font.render("다시하기", True, BLACK)
-            screen.blit(restart_text, (restart_rect.centerx - restart_text.get_width()//2, restart_rect.centery - restart_text.get_height()//2))
-
-        pygame.display.flip()
-        clock.tick(FPS)
-
-    pygame.quit()
-    sys.exit()
+# ── 앱 ───────────────────────────────────────
+class SpaceEscapeApp(App):
+    def build(self):
+        self.title = "Space Escape Game"
+        return GameWidget()
 
 if __name__ == "__main__":
-    main()
+    SpaceEscapeApp().run()

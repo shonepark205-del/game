@@ -9,15 +9,14 @@ source.include_exts = py,png,jpg,ttf,json,mid,mp3,wav
 version = 1.0
 version.code = 1
 
-requirements = python3,pygame_sdl2
+# ✅ kivy는 python-for-android 공식 recipe로 검증됨
+requirements = python3,kivy
 
 orientation = landscape
 fullscreen = 1
 
 android.api = 33
 android.minapi = 21
-
-# ✅ r25b 고정 (심볼릭 링크로 실제 NDK 27 사용)
 android.ndk = 25b
 android.ndk_api = 21
 
