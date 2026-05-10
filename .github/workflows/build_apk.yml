@@ -44,50 +44,44 @@ jobs:
           pip install buildozer==1.5.0
           pip install cython==0.29.36
 
-      # ✅ 핵심: GitHub Actions 기본 SDK 그대로 사용 + 심볼릭 링크만 추가
-      - name: 📱 Configure Android SDK (use pre-installed)
+      - name: 📱 Configure Android SDK + NDK (pre-installed)
         run: |
-          # GitHub Actions에 이미 설치된 SDK 경로 사용
-          export SDK_ROOT=/usr/local/lib/android/sdk
-          
+          SDK_ROOT=/usr/local/lib/android/sdk
+          NDK_ACTUAL=$SDK_ROOT/ndk/27.3.13750724
+
           # 라이선스 동의
           mkdir -p $SDK_ROOT/licenses
           printf "24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e\n84831b9409646a918e30573bab4c9c91346d8abd" \
             > $SDK_ROOT/licenses/android-sdk-license
-          
-          # build-tools 33.0.2 설치
+
           yes | $SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
           $SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
-            "build-tools;33.0.2" \
-            "platforms;android-33"
-          
-          # Buildozer가 찾는 경로에 심볼릭 링크
+            "build-tools;33.0.2" "platforms;android-33" || true
+
+          # Buildozer tools/bin 심볼릭 링크
           sudo mkdir -p $SDK_ROOT/tools/bin
           sudo ln -sf $SDK_ROOT/cmdline-tools/latest/bin/sdkmanager $SDK_ROOT/tools/bin/sdkmanager
           sudo ln -sf $SDK_ROOT/cmdline-tools/latest/bin/avdmanager  $SDK_ROOT/tools/bin/avdmanager
-          
-          # Buildozer가 사용할 경로로 SDK 복사/링크
-          mkdir -p $HOME/.buildozer/android/platform/
+
+          # ✅ Buildozer가 NDK를 다운로드하지 않도록
+          # r25b 이름으로 기존 NDK 27 심볼릭 링크 생성
+          mkdir -p $HOME/.buildozer/android/platform
           ln -sf $SDK_ROOT $HOME/.buildozer/android/platform/android-sdk
-          
-          # NDK도 기존 것 사용 (27버전)
-          ln -sf $SDK_ROOT/ndk/27.3.13750724 $HOME/.buildozer/android/platform/android-ndk-r25b
+          ln -sf $NDK_ACTUAL $HOME/.buildozer/android/platform/android-ndk-r25b
+
+          echo "=== NDK 심볼릭 링크 확인 ==="
+          ls -la $HOME/.buildozer/android/platform/
 
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> $GITHUB_ENV
           echo "$SDK_ROOT/build-tools/33.0.2" >> $GITHUB_PATH
           echo "$SDK_ROOT/platform-tools" >> $GITHUB_PATH
           echo "$SDK_ROOT/tools/bin" >> $GITHUB_PATH
 
-          echo "=== build-tools 확인 ==="
-          ls $SDK_ROOT/build-tools/
-          echo "=== aidl 확인 ==="
-          find $SDK_ROOT/build-tools -name "aidl" 2>/dev/null
-
       - name: 💾 Cache .buildozer local directory
         uses: actions/cache@v4
         with:
           path: .buildozer
-          key: buildozer-local-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}-${{ hashFiles('main.py') }}
+          key: buildozer-local-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
             buildozer-local-${{ runner.os }}-
 
@@ -107,8 +101,7 @@ jobs:
           elif find .buildozer -name "*.apk" 2>/dev/null | grep -q .; then
             find .buildozer -name "*.apk" -exec cp {} output/ \;
           else
-            echo "❌ APK 없음 - 오류 로그:"
-            grep -n "ERROR\|Error\|error\|FAILED\|not found\|Exception" build.log | grep -v "^#" | tail -30
+            grep -n "Error\|error\|FAILED\|Exception\|not found" build.log | grep -v "^#" | tail -30
             tail -50 build.log
             exit 1
           fi
