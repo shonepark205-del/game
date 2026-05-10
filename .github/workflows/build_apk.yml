@@ -6,60 +6,42 @@ on:
       - main
       - master
     tags:
-      - 'v*'           # v1.0, v1.1 등 태그 푸시 시 자동 빌드
+      - 'v*'
   pull_request:
     branches:
       - main
       - master
-  workflow_dispatch:   # GitHub 웹에서 수동 실행 버튼
+  workflow_dispatch:
 
 jobs:
   build-apk:
     name: Build Android APK
-    runs-on: ubuntu-22.04   # Buildozer가 안정적으로 동작하는 버전
+    runs-on: ubuntu-22.04
 
     steps:
-      # ── 1. 소스 코드 체크아웃 ──────────────────────────────
       - name: ⬇️ Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Python 설정 ────────────────────────────────────
       - name: 🐍 Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # ── 3. 시스템 의존성 설치 ──────────────────────────────
       - name: 📦 Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
-            python3-pip \
-            git \
-            zip \
-            unzip \
-            openjdk-17-jdk \
-            autoconf \
-            libtool \
-            pkg-config \
-            zlib1g-dev \
-            libncurses5-dev \
-            libncursesw5-dev \
-            libtinfo5 \
-            cmake \
-            libffi-dev \
-            libssl-dev \
-            build-essential \
-            ccache \
-            libltdl-dev
+            python3-pip git zip unzip openjdk-17-jdk \
+            autoconf libtool pkg-config zlib1g-dev \
+            libncurses5-dev libncursesw5-dev libtinfo5 \
+            cmake libffi-dev libssl-dev build-essential \
+            ccache libltdl-dev
 
-      # ── 4. Java 환경 설정 ──────────────────────────────────
       - name: ☕ Set up Java 17
         run: |
           echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> $GITHUB_ENV
           echo "/usr/lib/jvm/java-17-openjdk-amd64/bin" >> $GITHUB_PATH
 
-      # ── 5. Buildozer & Cython 설치 ─────────────────────────
       - name: 🔧 Install Buildozer and Cython
         run: |
           pip install --upgrade pip
@@ -67,7 +49,6 @@ jobs:
           pip install cython==0.29.36
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      # ── 6. 빌드 캐시 (NDK/SDK 재다운로드 방지) ────────────
       - name: 💾 Cache Buildozer global directory
         uses: actions/cache@v4
         with:
@@ -85,32 +66,43 @@ jobs:
             buildozer-local-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}-
             buildozer-local-${{ runner.os }}-
 
-      # ── 7. APK 빌드 ────────────────────────────────────────
       - name: 🔨 Build Debug APK
         run: |
           buildozer -v android debug 2>&1 | tee build.log
-        env:
-          ANDROID_SDK_ROOT: ${{ github.workspace }}/.buildozer/android/platform/android-sdk
 
-      # ── 8. 빌드 결과 확인 ──────────────────────────────────
-      - name: ✅ Check build output
+      # APK 위치를 찾아서 output/ 폴더로 모으기
+      - name: 🔍 Locate and collect APK files
         run: |
-          echo "=== bin/ 폴더 내용 ==="
-          ls -lh bin/ || echo "bin/ 폴더가 없습니다"
-          echo "=== APK 파일 검색 ==="
-          find . -name "*.apk" 2>/dev/null | head -10
+          echo "=== 전체 APK 검색 ==="
+          find . -name "*.apk" 2>/dev/null || echo "APK 없음"
 
-      # ── 9. APK 아티팩트 업로드 (Actions 탭에서 다운로드 가능) ──
+          mkdir -p output
+
+          # bin/ 우선, 없으면 .buildozer/ 안에서도 찾기
+          if find bin -name "*.apk" 2>/dev/null | grep -q .; then
+            cp bin/*.apk output/
+            echo "bin/ 에서 APK 복사 완료"
+          elif find .buildozer -name "*.apk" 2>/dev/null | grep -q .; then
+            find .buildozer -name "*.apk" -exec cp {} output/ \;
+            echo ".buildozer/ 에서 APK 복사 완료"
+          else
+            echo "❌ APK 파일을 찾지 못했습니다. build.log 확인 필요"
+            tail -50 build.log
+            exit 1
+          fi
+
+          echo "=== output/ 폴더 ==="
+          ls -lh output/
+
       - name: 📤 Upload APK artifact
         uses: actions/upload-artifact@v4
         if: success()
         with:
           name: space-escape-game-debug-apk
-          path: bin/*.apk
-          retention-days: 30   # 30일간 보관
+          path: output/*.apk
+          retention-days: 30
           if-no-files-found: error
 
-      # ── 10. 빌드 실패 시 로그 업로드 ──────────────────────
       - name: 📋 Upload build log on failure
         uses: actions/upload-artifact@v4
         if: failure()
@@ -119,12 +111,11 @@ jobs:
           path: build.log
           retention-days: 7
 
-  # ── 릴리즈 태그 푸시 시: GitHub Release에 APK 자동 첨부 ──────
   release:
     name: Create GitHub Release
     runs-on: ubuntu-22.04
     needs: build-apk
-    if: startsWith(github.ref, 'refs/tags/v')  # v로 시작하는 태그일 때만
+    if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
       - name: ⬇️ Checkout
@@ -143,16 +134,12 @@ jobs:
           body: |
             ## 🚀 Space Escape Game ${{ github.ref_name }}
 
-            **개발사:** 오리온  
-            **개발자:** 박시현  
+            **개발사:** 오리온 | **개발자:** 박시현
 
             ### 설치 방법
             1. 아래 `.apk` 파일을 안드로이드 기기에 다운로드
             2. 설정 → 보안 → **출처를 알 수 없는 앱 설치** 허용
             3. APK 파일 실행하여 설치
-
-            ### 변경사항
-            - 릴리즈 노트를 여기에 작성하세요
           files: ./release-apk/*.apk
           draft: false
           prerelease: false
